@@ -88,7 +88,7 @@ function createAmbientAudio(name, source) {
   audio.volume = 0;
   audio.addEventListener("canplay", () => {
     audioState.loaded[source] = true;
-    if (audioState.audioReady && audioState.enabled) {
+    if (audioState.audioReady && audioState.enabled && audioState.ambientTargetName === name) {
       const track = audioState.ambient[name];
       if (track) startTrack(track, name, false);
     }
