@@ -3,10 +3,10 @@
 The website loads exactly six local audio assets from this folder:
 
 ```text
-dawn.wav          minimal airy ambient music loop
-noon.wav          minimal clear/open ambient music loop
-dusk.wav          minimal warm/reflective ambient music loop
-midnight.wav      minimal deep/spacious ambient music loop
+dawn.mp3          final minimal airy ambient music loop
+noon.mp3          final minimal clear/open ambient music loop
+dusk.mp3          final minimal warm/reflective ambient music loop
+midnight.mp3      final minimal deep/spacious ambient music loop
 water-move.mp3    subtle continuous movement texture
 pebble-drop.mp3   refined plop → small splash → resonance
 ```
@@ -15,10 +15,7 @@ The four scene files and both interaction sounds are now configured from the sup
 
 Current scene durations:
 
-- `dawn.wav`: approximately 158.7 seconds;
-- `noon.wav`: approximately 59.6 seconds;
-- `dusk.wav`: approximately 90.2 seconds;
-- `midnight.wav`: approximately 89.7 seconds.
+- The four BGM files are the final supplied MP3 versions and are used exactly as provided.
 
 Recommended delivery:
 

@@ -42,10 +42,10 @@ const audioState = {
 };
 
 const AUDIO_ASSETS = {
-  dawn: "./audio/dawn.wav",
-  noon: "./audio/noon.wav",
-  dusk: "./audio/dusk.wav",
-  midnight: "./audio/midnight.wav",
+  dawn: "./audio/dawn.mp3",
+  noon: "./audio/noon.mp3",
+  dusk: "./audio/dusk.mp3",
+  midnight: "./audio/midnight.mp3",
   waterMove: "./audio/water-move.mp3",
   pebbleDrop: "./audio/pebble-drop.mp3"
 };
