@@ -24,6 +24,11 @@ const audioState = {
   waterMove: null,
   enabled: true,
   loaded: {},
+  buffers: {},
+  bufferPromises: {},
+  loadingPromise: null,
+  context: null,
+  masterGain: null,
   ambientFadeFrame: 0,
   movementFadeFrame: 0,
   movementStopTimer: null,
@@ -59,60 +64,163 @@ const WATER_MOVE_BASE_GAIN = .99;
 const WATER_MOVE_SPEED_GAIN = 0;
 const WATER_MOVE_MAX_GAIN = .99;
 
-function createAudioAsset(source, loop = false) {
-  const audio = new Audio(source);
-  audio.preload = "auto";
-  audio.loop = loop;
-  audio.volume = 0;
-  audio.addEventListener("canplaythrough", () => {
-    audioState.loaded[source] = true;
-    if (source === AUDIO_ASSETS.waterMove) console.debug("[water-move] loaded", source);
-  });
-  audio.addEventListener("error", () => {
-    audioState.loaded[source] = false;
-    if (source === AUDIO_ASSETS.waterMove) console.error("[water-move] failed to load", source, audio.error);
-  });
-  return audio;
+function getAudioContext() {
+  if (audioState.context) return audioState.context;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  audioState.context = new AudioContextClass();
+  audioState.masterGain = audioState.context.createGain();
+  audioState.masterGain.gain.value = 1;
+  audioState.masterGain.connect(audioState.context.destination);
+  return audioState.context;
+}
+
+function audioSourceUrl(source) {
+  return new URL(source, document.baseURI).href;
+}
+
+function loadAudioBuffer(name, source) {
+  if (audioState.bufferPromises[name]) return audioState.bufferPromises[name];
+  const context = getAudioContext();
+  if (!context) return Promise.resolve(null);
+  const url = audioSourceUrl(source);
+  const promise = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.arrayBuffer();
+    })
+    .then((data) => context.decodeAudioData(data))
+    .then((buffer) => {
+      audioState.buffers[name] = buffer;
+      audioState.loaded[source] = true;
+      return buffer;
+    })
+    .catch((error) => {
+      audioState.loaded[source] = false;
+      console.error(`[audio] failed to preload ${name}`, { url, error });
+      return null;
+    });
+  audioState.bufferPromises[name] = promise;
+  return promise;
 }
 
 function initializeAudioAssets() {
-  if (Object.keys(audioState.ambient).length) return;
-  ["dawn", "noon", "dusk", "midnight"].forEach((name) => {
-    audioState.ambient[name] = createAudioAsset(AUDIO_ASSETS[name], true);
+  if (audioState.loadingPromise) return audioState.loadingPromise;
+  const ambientNames = ["dawn", "noon", "dusk", "midnight"];
+  ambientNames.forEach((name) => {
+    audioState.ambient[name] ||= {
+      gain: null,
+      source: null,
+      offset: 0,
+      startedAt: 0,
+      playing: false,
+      volume: 0,
+      fadeToken: 0
+    };
   });
-  audioState.waterMove = createAudioAsset(AUDIO_ASSETS.waterMove, true);
+  audioState.waterMove ||= {
+    gain: null,
+    source: null,
+    offset: 0,
+    startedAt: 0,
+    playing: false,
+    volume: 0,
+    fadeToken: 0
+  };
+  const loadNames = [...ambientNames, "waterMove", "pebbleDrop"];
+  audioState.loadingPromise = Promise.all(loadNames.map((name) => loadAudioBuffer(name, AUDIO_ASSETS[name])));
+  return audioState.loadingPromise;
 }
 
-function playAudio(audio, interaction = false) {
-  if (!audio || (!audioState.enabled && !interaction)) return;
-  const promise = audio.play();
-  if (promise && typeof promise.then === "function") {
-    promise.then(() => {
-      if (audio === audioState.waterMove) console.debug("[water-move] playing", {
-        readyState: audio.readyState,
-        volume: audio.volume,
-        src: audio.currentSrc || audio.src
-      });
-    }).catch((error) => {
-      if (audio === audioState.waterMove) console.warn("[water-move] play rejected", error);
-    });
+function ensureTrackGain(track) {
+  if (!track || track.gain) return track?.gain;
+  const context = getAudioContext();
+  if (!context || !audioState.masterGain) return null;
+  track.gain = context.createGain();
+  track.gain.gain.value = track.volume;
+  track.gain.connect(audioState.masterGain);
+  return track.gain;
+}
+
+function startTrack(track, name) {
+  const context = getAudioContext();
+  const buffer = audioState.buffers[name];
+  if (!context || !buffer || !audioState.audioReady || track.playing) return;
+  const gain = ensureTrackGain(track);
+  if (!gain) return;
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  source.connect(gain);
+  const offset = buffer.duration ? track.offset % buffer.duration : 0;
+  source.start(0, offset);
+  track.source = source;
+  track.startedAt = context.currentTime - offset;
+  track.playing = true;
+  source.onended = () => {
+    if (track.source === source) {
+      track.source = null;
+      track.playing = false;
+    }
+  };
+}
+
+function stopTrack(track, reset = false) {
+  const context = getAudioContext();
+  if (!track) return;
+  if (track.playing && context && track.source) {
+    const duration = track.source.buffer?.duration || 0;
+    track.offset = reset || !duration ? 0 : (context.currentTime - track.startedAt) % duration;
+    track.source.onended = null;
+    try { track.source.stop(); } catch {}
+    track.source.disconnect();
+  } else if (reset) {
+    track.offset = 0;
   }
+  track.source = null;
+  track.playing = false;
 }
 
-function fadeAudio(audio, target, duration = 420, onComplete) {
-  if (!audio) return;
-  const fadeToken = (audio._fadeToken || 0) + 1;
-  audio._fadeToken = fadeToken;
-  const start = audio.volume;
+function fadeAudio(track, target, duration = 420, onComplete) {
+  if (!track) return;
+  const gain = ensureTrackGain(track);
+  const context = getAudioContext();
+  if (!gain || !context) return;
+  const fadeToken = ++track.fadeToken;
+  const start = track.volume;
+  const endTime = context.currentTime + duration / 1000;
+  gain.gain.cancelScheduledValues(context.currentTime);
+  gain.gain.setValueAtTime(start, context.currentTime);
+  gain.gain.linearRampToValueAtTime(target, endTime);
+  track.volume = target;
   const startedAt = performance.now();
   const step = () => {
-    if (audio._fadeToken !== fadeToken) return;
+    if (track.fadeToken !== fadeToken) return;
     const progress = Math.min(1, (performance.now() - startedAt) / duration);
-    audio.volume = start + (target - start) * (progress * progress * (3 - 2 * progress));
     if (progress < 1) requestAnimationFrame(step);
     else if (onComplete) onComplete();
   };
   requestAnimationFrame(step);
+}
+
+function playBuffer(name, volume = 1, playbackRate = 1) {
+  const context = getAudioContext();
+  const buffer = audioState.buffers[name];
+  if (!context || !buffer || !audioState.audioReady || !audioState.enabled) return;
+  const source = context.createBufferSource();
+  const gain = context.createGain();
+  source.buffer = buffer;
+  source.playbackRate.value = playbackRate;
+  gain.gain.value = volume;
+  source.connect(gain);
+  gain.connect(audioState.masterGain);
+  audioState.activeDrops.add(source);
+  source.addEventListener("ended", () => {
+    audioState.activeDrops.delete(source);
+    source.disconnect();
+    gain.disconnect();
+  }, { once: true });
+  source.start(0);
 }
 
 function ambientTargets(minutes) {
@@ -138,13 +246,13 @@ function updateAmbientForTime(minutes, immediate = false) {
   initializeAudioAssets();
   const targets = audioState.enabled ? ambientTargets(minutes) : {};
   const fadeId = ++audioState.ambientFadeFrame;
-  Object.entries(audioState.ambient).forEach(([name, audio]) => {
+  Object.entries(audioState.ambient).forEach(([name, track]) => {
     const target = targets[name] || 0;
-    if (target > 0 && audio.paused) playAudio(audio);
+    if (target > 0) startTrack(track, name);
     const duration = immediate || reducedMotion ? 20 : 850;
-    fadeAudio(audio, target, duration, () => {
+    fadeAudio(track, target, duration, () => {
       if (fadeId !== audioState.ambientFadeFrame) return;
-      if (!audioState.enabled && target === 0) audio.pause();
+      if (!audioState.enabled && target === 0) stopTrack(track);
     });
   });
 }
@@ -162,16 +270,12 @@ function setWaterMovement(velocityX, velocityY, active = true) {
   // Do not gate playback on a fragile threshold. Pointer and Pebble movement
   // both arrive here, but their pixel-to-simulation scales are different.
   const target = active && speed > 0 ? Math.min(WATER_MOVE_MAX_GAIN, WATER_MOVE_BASE_GAIN + speed * WATER_MOVE_SPEED_GAIN) : 0;
-  if (target > 0 && water.paused) {
-    console.debug("[water-move] start", { speed, velocityX, velocityY, target, loaded: audioState.loaded[AUDIO_ASSETS.waterMove] });
-    playAudio(water, true);
-  }
+  if (target > 0) startTrack(water, "waterMove");
   const fadeId = ++audioState.movementFadeFrame;
   fadeAudio(water, target, active ? 90 : 160, () => {
     if (fadeId !== audioState.movementFadeFrame || target > 0) return;
     audioState.movementStopTimer = setTimeout(() => {
-      water.pause();
-      console.debug("[water-move] stopped");
+      stopTrack(water);
     }, 90);
   });
 }
@@ -186,12 +290,12 @@ function pulseWaterMovement() {
   }
   const fadeId = ++audioState.movementFadeFrame;
   const target = WATER_MOVE_BASE_GAIN;
-  playAudio(water, true);
+  startTrack(water, "waterMove");
   fadeAudio(water, target, 35);
   audioState.movementStopTimer = setTimeout(() => {
     if (fadeId !== audioState.movementFadeFrame) return;
     fadeAudio(water, 0, 180, () => {
-      if (fadeId === audioState.movementFadeFrame) water.pause();
+      if (fadeId === audioState.movementFadeFrame) stopTrack(water);
     });
   }, 220);
 }
@@ -200,21 +304,22 @@ function playPebbleDrop(scale = 1) {
   const now = performance.now();
   if (now - audioState.lastDropAt < 160) return;
   audioState.lastDropAt = now;
-  const drop = new Audio(AUDIO_ASSETS.pebbleDrop);
-  drop.preload = "auto";
-  drop.volume = Math.max(.2, Math.min(.7, .44 + scale * .12));
-  drop.playbackRate = Math.max(.92, Math.min(1.08, .98 + (scale - 1) * .08));
-  audioState.activeDrops.add(drop);
-  drop.addEventListener("ended", () => {
-    audioState.activeDrops.delete(drop);
-    drop.remove();
-  });
-  playAudio(drop, true);
+  playBuffer(
+    "pebbleDrop",
+    Math.max(.2, Math.min(.7, .44 + scale * .12)),
+    Math.max(.92, Math.min(1.08, .98 + (scale - 1) * .08))
+  );
 }
 
 function unlockAudio() {
   initializeAudioAssets();
+  const context = getAudioContext();
+  if (!context) return false;
+  context.resume().catch((error) => console.warn("[audio] resume rejected", error));
   audioState.audioReady = true;
+  audioState.loadingPromise?.then(() => {
+    if (audioState.audioReady && audioState.enabled) updateAmbientForTime(selectedMinutes, true);
+  });
   return true;
 }
 
@@ -229,9 +334,10 @@ function setSoundEnabled(enabled) {
   updateSoundControl();
   if (!audioState.enabled) {
     audioState.ambientFadeFrame += 1;
-    Object.values(audioState.ambient).forEach((audio) => {
-      audio.pause();
-      audio.volume = 0;
+    Object.values(audioState.ambient).forEach((track) => {
+      stopTrack(track);
+      track.volume = 0;
+      if (track.gain) track.gain.gain.value = 0;
     });
     return;
   }
@@ -245,12 +351,16 @@ function handleFirstAudioInteraction() {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    Object.values(audioState.ambient).forEach((audio) => audio.pause());
-    if (audioState.waterMove) audioState.waterMove.pause();
+    Object.values(audioState.ambient).forEach((track) => stopTrack(track));
+    if (audioState.waterMove) stopTrack(audioState.waterMove);
   } else if (audioState.enabled) {
     updateAmbientForTime(selectedMinutes, true);
   }
 });
+
+// Fetch and decode every local audio asset while the page is idle. Playback
+// still waits for the first intentional interaction to satisfy autoplay rules.
+initializeAudioAssets();
 
 let W = 0, H = 0;
 let manualTime = false, selectedMinutes = 0, draggingTime = false, lastDragY = 0;
