@@ -83,7 +83,12 @@ function createAmbientAudio(source) {
   const audio = new Audio(audioSourceUrl(source));
   audio.preload = "auto";
   audio.loop = true;
+  audio.playsInline = true;
   audio.volume = 0;
+  audio.addEventListener("canplay", () => {
+    audioState.loaded[source] = true;
+    if (audioState.audioReady && audioState.enabled) updateAmbientForTime(selectedMinutes, true);
+  });
   audio.addEventListener("canplaythrough", () => {
     audioState.loaded[source] = true;
   });
@@ -162,6 +167,7 @@ function ensureTrackGain(track) {
 function startTrack(track, name) {
   if (track?.audio) {
     if (!audioState.audioReady || !track.audio.paused) return;
+    track.playRequested = true;
     track.audio.play().then(() => {
       track.playing = true;
     }).catch((error) => {
@@ -195,6 +201,7 @@ function startTrack(track, name) {
 function stopTrack(track, reset = false) {
   if (track?.audio) {
     track.audio.pause();
+    track.playRequested = false;
     if (reset) track.audio.currentTime = 0;
     track.playing = false;
     return;
