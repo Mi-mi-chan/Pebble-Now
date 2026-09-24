@@ -30,6 +30,7 @@ const audioState = {
   context: null,
   masterGain: null,
   ambientFadeFrame: 0,
+  ambientTargetName: null,
   movementFadeFrame: 0,
   movementStopTimer: null,
   lastPointerAt: 0,
@@ -164,19 +165,8 @@ function prepareAmbientTrack(name) {
   track.audio.load();
 }
 
-function scheduleAmbientTrack(name) {
-  const track = audioState.ambient[name];
-  if (!track || track.prepared || track.prepareTimer) return;
-  track.prepareTimer = setTimeout(() => {
-    track.prepareTimer = null;
-    prepareAmbientTrack(name);
-  }, 1200);
-}
-
 function prepareAmbientPlayers(minutes) {
-  const targets = ambientTargets(minutes);
-  const primary = Object.entries(targets).sort(([, left], [, right]) => right - left)[0]?.[0];
-  if (primary) prepareAmbientTrack(primary);
+  prepareAmbientTrack(ambientTrackForTime(minutes));
 }
 
 function ensureTrackGain(track) {
@@ -305,42 +295,31 @@ function playBuffer(name, volume = 1, playbackRate = 1) {
   source.start(0);
 }
 
-function ambientTargets(minutes) {
+function ambientTrackForTime(minutes) {
   const value = ((minutes % 1440) + 1440) % 1440;
-  let from = AMBIENT_POINTS[0];
-  let to = AMBIENT_POINTS[1];
   for (let index = 0; index < AMBIENT_POINTS.length - 1; index++) {
-    if (value >= AMBIENT_POINTS[index].minute && value <= AMBIENT_POINTS[index + 1].minute) {
-      from = AMBIENT_POINTS[index];
-      to = AMBIENT_POINTS[index + 1];
-      break;
-    }
+    if (value < AMBIENT_POINTS[index + 1].minute) return AMBIENT_POINTS[index].name;
   }
-  const raw = (value - from.minute) / Math.max(1, to.minute - from.minute);
-  const blend = raw * raw * (3 - 2 * raw);
-  return {
-    [from.name]: (1 - blend) * AMBIENT_GAIN,
-    [to.name]: blend * AMBIENT_GAIN
-  };
+  return AMBIENT_POINTS[0].name;
 }
 
 function updateAmbientForTime(minutes, immediate = false) {
   initializeAudioAssets();
   if (audioState.audioReady) prepareAmbientPlayers(minutes);
-  const targets = audioState.enabled ? ambientTargets(minutes) : {};
+  const targetName = audioState.enabled ? ambientTrackForTime(minutes) : null;
+  const targetTrack = targetName ? audioState.ambient[targetName] : null;
+  const targetChanged = targetName !== audioState.ambientTargetName;
+  const targetNeedsRestart = targetTrack?.audio && targetTrack.audio.paused;
+  if (!immediate && !targetChanged && !targetNeedsRestart) return;
+  audioState.ambientTargetName = targetName;
   const fadeId = ++audioState.ambientFadeFrame;
   Object.entries(audioState.ambient).forEach(([name, track]) => {
-    const target = targets[name] || 0;
-    if (target > 0) {
-      const primary = target === Math.max(...Object.values(targets));
-      if (primary) startTrack(track, name, true);
-      else if (track.prepared && track.audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) startTrack(track, name, false);
-      else scheduleAmbientTrack(name);
-    }
+    const target = name === targetName ? AMBIENT_GAIN : 0;
+    if (target > 0) startTrack(track, name, true);
     const duration = immediate || reducedMotion ? 20 : 850;
     fadeAudio(track, target, duration, () => {
       if (fadeId !== audioState.ambientFadeFrame) return;
-      if (!audioState.enabled && target === 0) stopTrack(track);
+      if (target === 0) stopTrack(track);
     });
   });
 }
@@ -423,6 +402,7 @@ function setSoundEnabled(enabled) {
   updateSoundControl();
   if (!audioState.enabled) {
     audioState.ambientFadeFrame += 1;
+    audioState.ambientTargetName = null;
     Object.values(audioState.ambient).forEach((track) => {
       stopTrack(track);
       track.volume = 0;
