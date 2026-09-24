@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#c8f0ee" />
+    <meta name="description" content="A quiet interactive mindfulness water space." />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Mindful Water</title>
+  </head>
+  <body>
+    <main class="hero">
+      <section class="pool-shell" aria-label="Interactive water surface">
+        <canvas id="pool" aria-label="Interactive water surface. Move, tap, or drag across the water."></canvas>
+        <canvas id="pebble-layer" aria-hidden="true"></canvas>
+        <h1>What’s on your mind?</h1>
+        <button class="sound-control" id="sound-control" type="button" aria-pressed="true">SOUND OFF</button>
+        <button class="time-control" type="button" aria-label="Use live local time">
+          <span class="time-dot"></span>
+          <span id="time-readout">--:-- --</span>
+          <span id="time-mode">LIVE</span>
+        </button>
+        <div class="feature-controls" aria-label="Water actions">
+          <button id="pebble-control" type="button" aria-pressed="false">+ PEBBLE</button>
+          <button id="collect-control" type="button" hidden>COLLECT</button>
+        </div>
+        <form class="thought-entry" id="thought-entry" hidden>
+          <label for="thought-input">Leave a thought here.</label>
+          <div class="thought-line">
+            <input id="thought-input" name="thought" maxlength="80" autocomplete="off" spellcheck="true" />
+            <button type="submit">PLACE</button>
+            <button type="button" id="thought-cancel">CANCEL</button>
+          </div>
+          <p class="thought-hint" id="thought-hint">A short thought, held gently.</p>
+        </form>
+        <div class="scene-focus" aria-hidden="true"></div>
+        <div class="time-dial" aria-hidden="true">
+          <div class="time-viewport">
+            <div class="time-timeline" id="time-timeline">
+              <div class="dial-labels">
+                <span class="label-midnight top">MIDNIGHT</span>
+                <span class="label-dawn">DAWN</span>
+                <span class="label-noon">NOON</span>
+                <span class="label-dusk">DUSK</span>
+                <span class="label-midnight bottom">MIDNIGHT</span>
+              </div>
+              <div class="dial-track" id="dial-track"></div>
+            </div>
+          </div>
+          <div class="dial-current"><span></span><b id="dial-time">--:--</b></div>
+          <button class="back-to-now" id="back-to-now" type="button">Back to now</button>
+        </div>
+      </section>
+    </main>
+    <div class="cursor-ring" aria-hidden="true"><span></span></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
