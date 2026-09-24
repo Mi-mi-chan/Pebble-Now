@@ -910,8 +910,8 @@ dialTrack.addEventListener("pointerup", (event) => { draggingTime = false; dialT
 document.addEventListener("pointerdown", (event) => { if (!wheelOpen || timeDial.contains(event.target) || timeControl.contains(event.target)) return; closeTimeWheel(); }, { capture: true });
 document.addEventListener("click", dismissWelcome, { capture: true });
 setInterval(() => { if (!manualTime) updateTimeUI(); }, 1000);
-document.addEventListener("pointerdown", handleFirstAudioInteraction, { once: true, passive: true });
-document.addEventListener("keydown", handleFirstAudioInteraction, { once: true });
+document.addEventListener("pointerdown", handleFirstAudioInteraction, { capture: true, once: true, passive: true });
+document.addEventListener("keydown", handleFirstAudioInteraction, { capture: true, once: true });
 soundControl.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") handleFirstAudioInteraction();
 });
