@@ -23,4 +23,4 @@ Recommended delivery:
 - `water-move.mp3`: 18.6-second movement loop;
 - `pebble-drop.mp3`: 1.1-second one-shot with its complete tail preserved.
 
-No ambient music is synthesized in JavaScript. The app uses native audio files and crossfades the four time loops.
+No ambient music is synthesized in JavaScript. The app plays one native BGM track for each time segment and crossfades only when the Time Wheel crosses into a different segment.
