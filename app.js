@@ -79,15 +79,18 @@ function audioSourceUrl(source) {
   return new URL(source, document.baseURI).href;
 }
 
-function createAmbientAudio(source) {
+function createAmbientAudio(name, source) {
   const audio = new Audio(audioSourceUrl(source));
-  audio.preload = "auto";
+  audio.preload = "metadata";
   audio.loop = true;
   audio.playsInline = true;
   audio.volume = 0;
   audio.addEventListener("canplay", () => {
     audioState.loaded[source] = true;
-    if (audioState.audioReady && audioState.enabled) updateAmbientForTime(selectedMinutes, true);
+    if (audioState.audioReady && audioState.enabled) {
+      const track = audioState.ambient[name];
+      if (track) startTrack(track, name);
+    }
   });
   audio.addEventListener("canplaythrough", () => {
     audioState.loaded[source] = true;
@@ -96,7 +99,6 @@ function createAmbientAudio(source) {
     audioState.loaded[source] = false;
     console.error("[audio] failed to load ambient track", { source, error: audio.error });
   });
-  audio.load();
   return audio;
 }
 
@@ -130,7 +132,7 @@ function initializeAudioAssets() {
   const ambientNames = ["dawn", "noon", "dusk", "midnight"];
   ambientNames.forEach((name) => {
     audioState.ambient[name] ||= {
-      audio: createAmbientAudio(AUDIO_ASSETS[name]),
+      audio: createAmbientAudio(name, AUDIO_ASSETS[name]),
       gain: null,
       source: null,
       offset: 0,
@@ -154,6 +156,18 @@ function initializeAudioAssets() {
   return audioState.loadingPromise;
 }
 
+function prepareAmbientTrack(name) {
+  const track = audioState.ambient[name];
+  if (!track || track.prepared) return;
+  track.prepared = true;
+  track.audio.preload = "auto";
+  track.audio.load();
+}
+
+function prepareAmbientPlayers(minutes) {
+  Object.keys(ambientTargets(minutes)).forEach(prepareAmbientTrack);
+}
+
 function ensureTrackGain(track) {
   if (!track || track.gain) return track?.gain;
   const context = getAudioContext();
@@ -167,6 +181,7 @@ function ensureTrackGain(track) {
 function startTrack(track, name) {
   if (track?.audio) {
     if (!audioState.audioReady || !track.audio.paused) return;
+    prepareAmbientTrack(name);
     track.playRequested = true;
     track.audio.play().then(() => {
       track.playing = true;
@@ -299,6 +314,7 @@ function ambientTargets(minutes) {
 
 function updateAmbientForTime(minutes, immediate = false) {
   initializeAudioAssets();
+  if (audioState.audioReady) prepareAmbientPlayers(minutes);
   const targets = audioState.enabled ? ambientTargets(minutes) : {};
   const fadeId = ++audioState.ambientFadeFrame;
   Object.entries(audioState.ambient).forEach(([name, track]) => {
@@ -372,6 +388,7 @@ function unlockAudio() {
   if (!context) return false;
   context.resume().catch((error) => console.warn("[audio] resume rejected", error));
   audioState.audioReady = true;
+  prepareAmbientPlayers(selectedMinutes);
   audioState.loadingPromise?.then(() => {
     if (audioState.audioReady && audioState.enabled) updateAmbientForTime(selectedMinutes, true);
   });
@@ -414,8 +431,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// Fetch and decode every local audio asset while the page is idle. Playback
-// still waits for the first intentional interaction to satisfy autoplay rules.
+// Preload only the short SFX buffers while the page is idle. Long BGM tracks
+// stay as native streaming players until the first intentional interaction.
 initializeAudioAssets();
 
 let W = 0, H = 0;
