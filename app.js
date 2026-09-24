@@ -89,7 +89,7 @@ function createAmbientAudio(name, source) {
     audioState.loaded[source] = true;
     if (audioState.audioReady && audioState.enabled) {
       const track = audioState.ambient[name];
-      if (track) startTrack(track, name);
+      if (track) startTrack(track, name, false);
     }
   });
   audio.addEventListener("canplaythrough", () => {
@@ -164,8 +164,19 @@ function prepareAmbientTrack(name) {
   track.audio.load();
 }
 
+function scheduleAmbientTrack(name) {
+  const track = audioState.ambient[name];
+  if (!track || track.prepared || track.prepareTimer) return;
+  track.prepareTimer = setTimeout(() => {
+    track.prepareTimer = null;
+    prepareAmbientTrack(name);
+  }, 1200);
+}
+
 function prepareAmbientPlayers(minutes) {
-  Object.keys(ambientTargets(minutes)).forEach(prepareAmbientTrack);
+  const targets = ambientTargets(minutes);
+  const primary = Object.entries(targets).sort(([, left], [, right]) => right - left)[0]?.[0];
+  if (primary) prepareAmbientTrack(primary);
 }
 
 function ensureTrackGain(track) {
@@ -178,10 +189,11 @@ function ensureTrackGain(track) {
   return track.gain;
 }
 
-function startTrack(track, name) {
+function startTrack(track, name, primary = true) {
   if (track?.audio) {
     if (!audioState.audioReady || !track.audio.paused) return;
-    prepareAmbientTrack(name);
+    if (primary) prepareAmbientTrack(name);
+    if (!primary && track.audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     track.playRequested = true;
     track.audio.play().then(() => {
       track.playing = true;
@@ -319,7 +331,12 @@ function updateAmbientForTime(minutes, immediate = false) {
   const fadeId = ++audioState.ambientFadeFrame;
   Object.entries(audioState.ambient).forEach(([name, track]) => {
     const target = targets[name] || 0;
-    if (target > 0) startTrack(track, name);
+    if (target > 0) {
+      const primary = target === Math.max(...Object.values(targets));
+      if (primary) startTrack(track, name, true);
+      else if (track.prepared && track.audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) startTrack(track, name, false);
+      else scheduleAmbientTrack(name);
+    }
     const duration = immediate || reducedMotion ? 20 : 850;
     fadeAudio(track, target, duration, () => {
       if (fadeId !== audioState.ambientFadeFrame) return;
