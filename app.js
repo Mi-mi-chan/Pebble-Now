@@ -79,6 +79,22 @@ function audioSourceUrl(source) {
   return new URL(source, document.baseURI).href;
 }
 
+function createAmbientAudio(source) {
+  const audio = new Audio(audioSourceUrl(source));
+  audio.preload = "auto";
+  audio.loop = true;
+  audio.volume = 0;
+  audio.addEventListener("canplaythrough", () => {
+    audioState.loaded[source] = true;
+  });
+  audio.addEventListener("error", () => {
+    audioState.loaded[source] = false;
+    console.error("[audio] failed to load ambient track", { source, error: audio.error });
+  });
+  audio.load();
+  return audio;
+}
+
 function loadAudioBuffer(name, source) {
   if (audioState.bufferPromises[name]) return audioState.bufferPromises[name];
   const context = getAudioContext();
@@ -109,6 +125,7 @@ function initializeAudioAssets() {
   const ambientNames = ["dawn", "noon", "dusk", "midnight"];
   ambientNames.forEach((name) => {
     audioState.ambient[name] ||= {
+      audio: createAmbientAudio(AUDIO_ASSETS[name]),
       gain: null,
       source: null,
       offset: 0,
@@ -127,7 +144,7 @@ function initializeAudioAssets() {
     volume: 0,
     fadeToken: 0
   };
-  const loadNames = [...ambientNames, "waterMove", "pebbleDrop"];
+  const loadNames = ["waterMove", "pebbleDrop"];
   audioState.loadingPromise = Promise.all(loadNames.map((name) => loadAudioBuffer(name, AUDIO_ASSETS[name])));
   return audioState.loadingPromise;
 }
@@ -143,6 +160,16 @@ function ensureTrackGain(track) {
 }
 
 function startTrack(track, name) {
+  if (track?.audio) {
+    if (!audioState.audioReady || !track.audio.paused) return;
+    track.audio.play().then(() => {
+      track.playing = true;
+    }).catch((error) => {
+      track.playing = false;
+      console.warn("[audio] ambient playback rejected", { name, error });
+    });
+    return;
+  }
   const context = getAudioContext();
   const buffer = audioState.buffers[name];
   if (!context || !buffer || !audioState.audioReady || track.playing) return;
@@ -166,6 +193,12 @@ function startTrack(track, name) {
 }
 
 function stopTrack(track, reset = false) {
+  if (track?.audio) {
+    track.audio.pause();
+    if (reset) track.audio.currentTime = 0;
+    track.playing = false;
+    return;
+  }
   const context = getAudioContext();
   if (!track) return;
   if (track.playing && context && track.source) {
@@ -183,6 +216,21 @@ function stopTrack(track, reset = false) {
 
 function fadeAudio(track, target, duration = 420, onComplete) {
   if (!track) return;
+  if (track.audio) {
+    const fadeToken = ++track.fadeToken;
+    const start = track.audio.volume;
+    const startedAt = performance.now();
+    const step = () => {
+      if (track.fadeToken !== fadeToken) return;
+      const progress = Math.min(1, (performance.now() - startedAt) / duration);
+      track.audio.volume = start + (target - start) * (progress * progress * (3 - 2 * progress));
+      track.volume = track.audio.volume;
+      if (progress < 1) requestAnimationFrame(step);
+      else if (onComplete) onComplete();
+    };
+    requestAnimationFrame(step);
+    return;
+  }
   const gain = ensureTrackGain(track);
   const context = getAudioContext();
   if (!gain || !context) return;
@@ -337,6 +385,7 @@ function setSoundEnabled(enabled) {
     Object.values(audioState.ambient).forEach((track) => {
       stopTrack(track);
       track.volume = 0;
+      if (track.audio) track.audio.volume = 0;
       if (track.gain) track.gain.gain.value = 0;
     });
     return;
